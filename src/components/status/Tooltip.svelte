@@ -54,11 +54,11 @@
 	import DiscordAccountsEvidence from './DiscordAccountsEvidence.svelte';
 	import { get } from 'svelte/store';
 	import { _, locale } from 'svelte-i18n';
-	import { SETTINGS_KEYS } from '@/lib/types/settings';
+	import { SETTINGS_KEYS, type SettingsKey } from '@/lib/types/settings';
 
 	import type { CombinedStatus } from '@/lib/types/custom-api';
 	import { ROTECTOR_API_ID } from '@/lib/services/unified-query-service';
-	import { settings, updateSetting } from '@/lib/stores/settings';
+	import { settings, updateSetting, removeSetting } from '@/lib/stores/settings';
 
 	const TOOLTIP_SIZE = {
 		MIN_WIDTH: 400,
@@ -66,6 +66,15 @@
 		MAX_WIDTH_RATIO: 0.9,
 		MAX_HEIGHT_RATIO: 0.9
 	} as const;
+
+	const PREVIEW_TOOLTIP_SIZE = {
+		MIN_WIDTH: 200,
+		MIN_HEIGHT: 150,
+		MAX_WIDTH: 500,
+		MAX_HEIGHT: 600
+	} as const;
+
+	const COMPACT_HEADER_MIN_WIDTH = 450;
 
 	interface Props {
 		userId: string | number;
@@ -78,7 +87,6 @@
 		onViewOutfits?: () => void;
 		onClose?: () => void;
 		onExpand?: () => void;
-		element?: HTMLElement;
 		onMouseEnter?: () => void;
 		onMouseLeave?: () => void;
 		userUsername?: string;
@@ -97,7 +105,6 @@
 		onViewOutfits,
 		onClose,
 		onExpand,
-		element = $bindable(),
 		onMouseEnter,
 		onMouseLeave,
 		userUsername,
@@ -134,6 +141,7 @@
 	let resizeStartSize = $state<{ width: number; height: number } | null>(null);
 	let customWidth = $state<number | undefined>(undefined);
 	let customHeight = $state<number | undefined>(undefined);
+	let headerCompact = $state(false);
 
 	// Engine version status for options menu display
 	const engineVersionStatus = $derived.by(() => {
@@ -439,27 +447,55 @@
 		return translateEnabled && hasReasons;
 	});
 
+	// Resize config based on current tooltip mode
+	function getResizeConfig() {
+		if (isExpanded) {
+			return {
+				minWidth: TOOLTIP_SIZE.MIN_WIDTH,
+				minHeight: TOOLTIP_SIZE.MIN_HEIGHT,
+				maxWidth: window.innerWidth * TOOLTIP_SIZE.MAX_WIDTH_RATIO,
+				maxHeight: window.innerHeight * TOOLTIP_SIZE.MAX_HEIGHT_RATIO,
+				widthKey: SETTINGS_KEYS.EXPANDED_TOOLTIP_WIDTH as SettingsKey,
+				heightKey: SETTINGS_KEYS.EXPANDED_TOOLTIP_HEIGHT as SettingsKey,
+				sensitivity: 2
+			};
+		}
+		return {
+			minWidth: PREVIEW_TOOLTIP_SIZE.MIN_WIDTH,
+			minHeight: PREVIEW_TOOLTIP_SIZE.MIN_HEIGHT,
+			maxWidth: PREVIEW_TOOLTIP_SIZE.MAX_WIDTH,
+			maxHeight: PREVIEW_TOOLTIP_SIZE.MAX_HEIGHT,
+			widthKey: SETTINGS_KEYS.PREVIEW_TOOLTIP_WIDTH as SettingsKey,
+			heightKey: SETTINGS_KEYS.PREVIEW_TOOLTIP_HEIGHT as SettingsKey,
+			sensitivity: 1
+		};
+	}
+
 	// Calculate constrained tooltip dimensions
 	const tooltipDimensions = $derived.by(() => {
-		const maxWidth = window.innerWidth * TOOLTIP_SIZE.MAX_WIDTH_RATIO;
-		const maxHeight = window.innerHeight * TOOLTIP_SIZE.MAX_HEIGHT_RATIO;
-
+		const config = getResizeConfig();
 		return {
 			width: customWidth
-				? Math.min(Math.max(customWidth, TOOLTIP_SIZE.MIN_WIDTH), maxWidth)
+				? Math.min(Math.max(customWidth, config.minWidth), config.maxWidth)
 				: undefined,
 			height: customHeight
-				? Math.min(Math.max(customHeight, TOOLTIP_SIZE.MIN_HEIGHT), maxHeight)
+				? Math.min(Math.max(customHeight, config.minHeight), config.maxHeight)
 				: undefined
 		};
 	});
 
-	// Get text to display (original or translated)
+	// Two-column compact layout when tooltip is wide enough
+	const showCompactColumns = $derived(
+		headerCompact && (tooltipDimensions.width ?? TOOLTIP_SIZE.MIN_WIDTH) >= COMPACT_HEADER_MIN_WIDTH
+	);
+
+	// Get text to display
 	function getDisplayText(originalText: string): string {
 		if (!showTranslated) return originalText;
 		return translationsMap[originalText] || originalText;
 	}
 
+	// Reviewer display info for current user status
 	const reviewerInfo = $derived.by((): ReviewerInfo | null => {
 		if (isGroup) return null;
 		const currentStatus = activeUserStatus;
@@ -467,8 +503,10 @@
 		return currentStatus.reviewer;
 	});
 
+	// Status badge text and CSS class for the active tab
 	const badgeStatus = $derived.by(() => calculateStatusBadges(activeUserStatus));
 
+	// Whether the cached status data is stale
 	const isOutdated = $derived.by(() => {
 		if (isGroup) return false;
 		const currentStatus = activeUserStatus;
@@ -626,6 +664,7 @@
 		showOptionsMenu = !showOptionsMenu;
 	}
 
+	// Tooltip resize handlers
 	function handleResizeStart(event: MouseEvent) {
 		event.preventDefault();
 		event.stopPropagation();
@@ -644,20 +683,22 @@
 	function handleResizeMove(event: MouseEvent) {
 		if (!isResizing || !resizeStartPos || !resizeStartSize) return;
 
-		const deltaX = (event.clientX - resizeStartPos.x) * 2;
-		const deltaY = (event.clientY - resizeStartPos.y) * 2;
-
-		const maxWidth = window.innerWidth * TOOLTIP_SIZE.MAX_WIDTH_RATIO;
-		const maxHeight = window.innerHeight * TOOLTIP_SIZE.MAX_HEIGHT_RATIO;
+		const config = getResizeConfig();
+		const deltaX = (event.clientX - resizeStartPos.x) * config.sensitivity;
+		const deltaY = (event.clientY - resizeStartPos.y) * config.sensitivity;
 
 		customWidth = Math.min(
-			Math.max(resizeStartSize.width + deltaX, TOOLTIP_SIZE.MIN_WIDTH),
-			maxWidth
+			Math.max(resizeStartSize.width + deltaX, config.minWidth),
+			config.maxWidth
 		);
 		customHeight = Math.min(
-			Math.max(resizeStartSize.height + deltaY, TOOLTIP_SIZE.MIN_HEIGHT),
-			maxHeight
+			Math.max(resizeStartSize.height + deltaY, config.minHeight),
+			config.maxHeight
 		);
+
+		if (!isExpanded) {
+			requestAnimationFrame(() => positionTooltip());
+		}
 	}
 
 	function handleResizeEnd() {
@@ -670,16 +711,54 @@
 		document.removeEventListener('mousemove', handleResizeMove);
 		document.removeEventListener('mouseup', handleResizeEnd);
 
+		const config = getResizeConfig();
 		if (customWidth !== undefined) {
-			updateSetting(SETTINGS_KEYS.EXPANDED_TOOLTIP_WIDTH, customWidth).catch((err) => {
+			updateSetting(config.widthKey, customWidth).catch((err) => {
 				logger.error('Failed to save tooltip width:', err);
 			});
 		}
 		if (customHeight !== undefined) {
-			updateSetting(SETTINGS_KEYS.EXPANDED_TOOLTIP_HEIGHT, customHeight).catch((err) => {
+			updateSetting(config.heightKey, customHeight).catch((err) => {
 				logger.error('Failed to save tooltip height:', err);
 			});
 		}
+	}
+
+	function handleResizeReset(event: MouseEvent) {
+		event.preventDefault();
+		event.stopPropagation();
+
+		// Clean up any in-progress resize
+		isResizing = false;
+		resizeStartPos = null;
+		resizeStartSize = null;
+		document.removeEventListener('mousemove', handleResizeMove);
+		document.removeEventListener('mouseup', handleResizeEnd);
+
+		const config = getResizeConfig();
+		customWidth = undefined;
+		customHeight = undefined;
+		removeSetting(config.widthKey).catch((err) => {
+			logger.error('Failed to remove tooltip width setting:', err);
+		});
+		removeSetting(config.heightKey).catch((err) => {
+			logger.error('Failed to remove tooltip height setting:', err);
+		});
+
+		// Reposition preview tooltip after reset
+		if (!isExpanded) {
+			requestAnimationFrame(() => positionTooltip());
+		}
+	}
+
+	// Header compact toggle
+	function toggleHeaderCompact(event: MouseEvent) {
+		event.preventDefault();
+		event.stopPropagation();
+		headerCompact = !headerCompact;
+		updateSetting(SETTINGS_KEYS.EXPANDED_HEADER_HEIGHT, headerCompact ? 1 : 0).catch((err) => {
+			logger.error('Failed to save header compact state:', err);
+		});
 	}
 
 	// Copy Discord link to clipboard
@@ -708,11 +787,12 @@
 
 	// Handle click outside options menu
 	function handleOptionsMenuClickOutside(event: MouseEvent) {
+		const target = event.composedPath()[0];
 		if (
 			showOptionsMenu &&
 			optionsMenuRef &&
-			event.target instanceof Node &&
-			!optionsMenuRef.contains(event.target)
+			target instanceof Node &&
+			!optionsMenuRef.contains(target)
 		) {
 			showOptionsMenu = false;
 		}
@@ -720,6 +800,7 @@
 
 	// Handle expand tooltip click
 	function handleExpand() {
+		if (isResizing) return;
 		if (!isExpanded && onExpand) {
 			onExpand();
 		}
@@ -818,11 +899,12 @@
 
 	// Handle clicks outside tooltip
 	function handleClickOutside(event: MouseEvent) {
+		const target = event.composedPath()[0];
 		if (
 			tooltipRef &&
-			event.target instanceof Node &&
-			!tooltipRef.contains(event.target) &&
-			!anchorElement.contains(event.target) &&
+			target instanceof Node &&
+			!tooltipRef.contains(target) &&
+			!anchorElement.contains(target) &&
 			onClose
 		) {
 			onClose();
@@ -856,24 +938,24 @@
 		}, 350);
 	}
 
-	// Load saved dimensions when tooltip expands
+	// Load saved dimensions based on tooltip mode
 	$effect(() => {
 		if (isExpanded) {
 			customWidth = $settings[SETTINGS_KEYS.EXPANDED_TOOLTIP_WIDTH];
 			customHeight = $settings[SETTINGS_KEYS.EXPANDED_TOOLTIP_HEIGHT];
+			headerCompact = !!$settings[SETTINGS_KEYS.EXPANDED_HEADER_HEIGHT];
+		} else {
+			customWidth = $settings[SETTINGS_KEYS.PREVIEW_TOOLTIP_WIDTH];
+			customHeight = $settings[SETTINGS_KEYS.PREVIEW_TOOLTIP_HEIGHT];
 		}
 	});
 
 	// Handle window resize to clamp dimensions
 	$effect(() => {
-		if (!isExpanded) return;
-
 		function handleWindowResize() {
-			const maxWidth = window.innerWidth * TOOLTIP_SIZE.MAX_WIDTH_RATIO;
-			const maxHeight = window.innerHeight * TOOLTIP_SIZE.MAX_HEIGHT_RATIO;
-
-			if (customWidth && customWidth > maxWidth) customWidth = maxWidth;
-			if (customHeight && customHeight > maxHeight) customHeight = maxHeight;
+			const config = getResizeConfig();
+			if (customWidth && customWidth > config.maxWidth) customWidth = config.maxWidth;
+			if (customHeight && customHeight > config.maxHeight) customHeight = config.maxHeight;
 		}
 
 		window.addEventListener('resize', handleWindowResize);
@@ -904,8 +986,6 @@
 
 	// Setup and cleanup
 	$effect(() => {
-		element = tooltipRef;
-
 		if (isGroup) {
 			groupInfo = getPageGroupInfo();
 		} else {
@@ -977,6 +1057,15 @@
 						{/if}
 					</span>
 				</span>
+				{#if reviewer.username === 'Anonymous' && reviewer.displayName === 'Anonymous'}
+					<div class="reviewer-anonymous-indicator">
+						<Info size={12} />
+						<div class="reviewer-anonymous-popover">
+							<strong>{$_('tooltip_reviewer_anonymous_title')}</strong>
+							<p>{$_('tooltip_reviewer_anonymous_message')}</p>
+						</div>
+					</div>
+				{/if}
 			</div>
 		{/if}
 	{/if}
@@ -1046,8 +1135,8 @@
 					class="tooltip-tab"
 					class:active={activeTab === tab.id}
 					class:error={!hasImage && tab.error}
-					class:has-image={hasImage}
 					class:loading={!hasImage && tab.loading}
+					class:tooltipTabHasImage={hasImage}
 					onclick={(e) => {
 						e.stopPropagation();
 						activeTab = tab.id;
@@ -1185,7 +1274,7 @@
 				{/if}
 
 				<!-- Queue button -->
-				<div class="flex gap-2 mt-3">
+				<div class="flex gap-2 mt-2">
 					{#if queueCooldownInfo.isInCooldown}
 						<button class="queue-button w-full queue-button-disabled" disabled type="button">
 							{$_('tooltip_queue_cooldown', {
@@ -1362,6 +1451,37 @@
 																		</p>
 																	</div>
 																</div>
+															{:else if parsed.source.toLowerCase() === 'discord'}
+																<div class="source-info-indicator">
+																	<Info size={12} />
+																	<div class="source-info-popover">
+																		<strong>{$_('tooltip_discord_info_title')}</strong>
+																		<p>{$_('tooltip_discord_info_message')}</p>
+																		<div class="source-info-list">
+																			<div class="source-info-list-item">
+																				<span
+																					><strong>Joined</strong> - {$_(
+																						'tooltip_discord_info_joined'
+																					)}</span
+																				>
+																			</div>
+																			<div class="source-info-list-item">
+																				<span
+																					><strong>First seen</strong> - {$_(
+																						'tooltip_discord_info_first_seen'
+																					)}</span
+																				>
+																			</div>
+																			<div class="source-info-list-item">
+																				<span
+																					><strong>Updated</strong> - {$_(
+																						'tooltip_discord_info_updated'
+																					)}</span
+																				>
+																			</div>
+																		</div>
+																	</div>
+																</div>
 															{/if}
 														</div>
 														<div class="source-evidence-description">{parsed.description}</div>
@@ -1472,15 +1592,15 @@
 										type="button"
 									>
 										{#if copySuccess}
-											<Check class="tooltip-options-icon success" size={14} />
+											<Check class="tooltip-options-icon success" size={15} />
 										{:else}
-											<Link class="tooltip-options-icon" size={14} />
+											<Link class="tooltip-options-icon" size={15} />
 										{/if}
 										<span>{$_('tooltip_copy_link')}</span>
 									</button>
 									{#if onViewOutfits}
 										<button class="tooltip-options-item" onclick={handleViewOutfits} type="button">
-											<Shirt class="tooltip-options-icon" size={14} />
+											<Shirt class="tooltip-options-icon" size={15} />
 											<span>{$_('outfit_viewer_button')}</span>
 										</button>
 									{/if}
@@ -1511,7 +1631,7 @@
 					<!-- Profile Header -->
 					{#if isGroup && groupInfo}
 						<!-- Group Header -->
-						<div class="tooltip-profile-header">
+						<div class="tooltip-profile-header" class:compact={headerCompact}>
 							<div class="tooltip-avatar">
 								<img alt="" src={groupInfo.groupImageUrl} />
 							</div>
@@ -1528,10 +1648,18 @@
 									</div>
 								{/if}
 							</div>
+							{#if showCompactColumns}
+								<div class="tooltip-header-right">
+									{#if activeStatus}
+										<div class="tooltip-inline-message">{headerMessage}</div>
+									{/if}
+									{@render reviewerSection()}
+								</div>
+							{/if}
 						</div>
 					{:else if !isGroup && userInfo}
 						<!-- User Header -->
-						<div class="tooltip-profile-header">
+						<div class="tooltip-profile-header" class:compact={headerCompact}>
 							<div class="tooltip-avatar">
 								<img alt="" src={userInfo.avatarUrl} />
 							</div>
@@ -1551,6 +1679,14 @@
 									</div>
 								{/if}
 							</div>
+							{#if showCompactColumns}
+								<div class="tooltip-header-right">
+									{#if activeStatus}
+										<div class="tooltip-inline-message">{headerMessage}</div>
+									{/if}
+									{@render reviewerSection()}
+								</div>
+							{/if}
 						</div>
 					{:else}
 						<!-- Fallback header -->
@@ -1564,15 +1700,23 @@
 						</div>
 					{/if}
 
-					<!-- Header message -->
-					{#if (userInfo || groupInfo) && activeStatus}
-						<div class="tooltip-header">
-							<div>{headerMessage}</div>
-						</div>
+					<!-- Header message and reviewer -->
+					{#if !showCompactColumns}
+						{#if (userInfo || groupInfo) && activeStatus}
+							<div class="tooltip-header">
+								<div>{headerMessage}</div>
+							</div>
+						{/if}
+						{@render reviewerSection()}
 					{/if}
 
-					<!-- Reviewer Section -->
-					{@render reviewerSection()}
+					<!-- Header Compact Toggle -->
+					<button
+						class="tooltip-header-toggle"
+						aria-label={$_('tooltip_header_toggle_aria')}
+						onclick={toggleHeaderCompact}
+						type="button"
+					></button>
 				</div>
 
 				<!-- Scrollable content -->
@@ -1589,6 +1733,7 @@
 			<div
 				class="tooltip-resize-handle"
 				aria-label={$_('tooltip_resize_handle_aria')}
+				ondblclick={handleResizeReset}
 				onmousedown={handleResizeStart}
 				role="separator"
 			></div>
@@ -1598,7 +1743,12 @@
 	<!-- Preview tooltip structure -->
 	<div
 		bind:this={tooltipRef}
+		style:width={tooltipDimensions.width ? `${tooltipDimensions.width}px` : undefined}
+		style:height={tooltipDimensions.height ? `${tooltipDimensions.height}px` : undefined}
+		style:max-width={tooltipDimensions.width ? `${tooltipDimensions.width}px` : undefined}
+		style:max-height={tooltipDimensions.height ? `${tooltipDimensions.height}px` : undefined}
 		class="rtcr-tooltip-container"
+		class:is-resizing={isResizing}
 		aria-label={$_('tooltip_aria_expand')}
 		aria-labelledby="tooltip-header"
 		onclick={handleExpand}
@@ -1609,7 +1759,9 @@
 			}
 		}}
 		onmouseenter={onMouseEnter}
-		onmouseleave={onMouseLeave}
+		onmouseleave={() => {
+			if (!isResizing) onMouseLeave?.();
+		}}
 		role="button"
 		tabindex="0"
 	>
@@ -1628,8 +1780,24 @@
 		</div>
 
 		<!-- Content -->
-		<div class="tooltip-scrollable-content px-3 py-2 text-left">
+		<div
+			style:max-height={tooltipDimensions.height ? 'none' : undefined}
+			class="tooltip-scrollable-content px-3 py-2 text-left"
+			class:flex-1={!!tooltipDimensions.height}
+		>
 			{@render tooltipContent()}
 		</div>
+
+		<!-- Resize Handle -->
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<div
+			class="tooltip-resize-handle"
+			aria-label={$_('tooltip_resize_handle_aria')}
+			onclick={(e) => e.stopPropagation()}
+			ondblclick={handleResizeReset}
+			onmousedown={handleResizeStart}
+			role="separator"
+		></div>
 	</div>
 {/if}
