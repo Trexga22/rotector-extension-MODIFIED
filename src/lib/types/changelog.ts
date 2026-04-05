@@ -16,6 +16,40 @@ export interface Changelog {
 // Current changelog data
 export const CHANGELOGS: Changelog[] = [
 	{
+		id: 'v2.15.2',
+		version: '2.15.2',
+		date: '2026-04-10',
+		title: '',
+		summary: '',
+		changes: [
+			{
+				type: 'changed',
+				description:
+					'Auto-confirm distinction - Unsafe user tooltips now differentiate between moderator-verified and system auto-confirmed results'
+			},
+			{
+				type: 'changed',
+				description:
+					'Safe reasons - Expanded the "Why wasn\'t this user flagged?" list with new entries'
+			},
+			{
+				type: 'changed',
+				description:
+					'Neutral terminology - Replaced user-facing references from "AI" to "our system" and "analysis" to better reflect the product'
+			},
+			{
+				type: 'fixed',
+				description:
+					'Group members carousel - Status indicators no longer get stuck loading when quickly switching roles or changing pages'
+			},
+			{
+				type: 'fixed',
+				description:
+					'Tooltip resize - Safe user and group tooltips no longer retain a large saved height, shrinking to fit their minimal content instead'
+			}
+		]
+	},
+	{
 		id: 'v2.15.1',
 		version: '2.15.1',
 		date: '2026-03-23',
@@ -105,7 +139,7 @@ export const CHANGELOGS: Changelog[] = [
 			{
 				type: 'added',
 				description:
-					'Stricter evaluation indicator - Hoverable info icon on profile reason headers explains when the AI applied stricter standards'
+					'Stricter evaluation indicator - Hoverable info icon on profile reason headers explains when the system applied stricter standards'
 			},
 			{
 				type: 'added',
@@ -730,7 +764,7 @@ export const CHANGELOGS: Changelog[] = [
 			{
 				type: 'changed',
 				description:
-					'Status labels now distinguish between users not flagged by AI and users not yet queued'
+					'Status labels now distinguish between users not flagged by the system and users not yet queued'
 			},
 			{
 				type: 'changed',
@@ -788,7 +822,7 @@ export const CHANGELOGS: Changelog[] = [
 			{
 				type: 'added',
 				description:
-					'Weekly usage charts - View AI costs and usage transparency data with interactive weekly charts in popup'
+					'Weekly usage charts - View analysis costs and usage transparency data with interactive weekly charts in popup'
 			},
 			{
 				type: 'changed',
@@ -983,7 +1017,7 @@ export const CHANGELOGS: Changelog[] = [
 				type: 'added',
 				description: 'New features and capabilities',
 				subpoints: [
-					'Engine version indicators showing which AI detection engine version analyzed each user for transparency',
+					'Engine version indicators showing which detection engine version analyzed each user for transparency',
 					'Theme system allowing choice between auto, light, and dark themes to match preferences',
 					'Secret developer panel for advanced users with custom API endpoints and debug logging',
 					'Changelog notifications to stay informed about new features and improvements',

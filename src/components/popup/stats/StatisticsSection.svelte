@@ -1,11 +1,10 @@
 <script lang="ts">
 	import LoadingSpinner from '../../ui/LoadingSpinner.svelte';
-	import { Ban, ShieldHalf } from 'lucide-svelte';
+	import { Ban, ShieldHalf } from '@lucide/svelte';
 	import {
 		formatNumber,
 		lastUpdatedFormatted,
 		loadStatistics,
-		refreshStatistics,
 		statistics,
 		statisticsState
 	} from '@/lib/stores/statistics';
@@ -20,7 +19,7 @@
 
 		isRefreshing = true;
 		try {
-			await refreshStatistics();
+			await loadStatistics(true);
 		} catch (error) {
 			logger.error('Failed to refresh statistics:', error);
 		} finally {

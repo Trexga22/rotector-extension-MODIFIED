@@ -11,7 +11,7 @@
 	import {
 		type FormattedReasonEntry,
 		formatViolationReasons,
-		parseSourceTag
+		groupSourceLines
 	} from '@/lib/utils/violation-formatter';
 	import {
 		detectPageContext,
@@ -48,7 +48,7 @@
 		Info,
 		ChevronRight,
 		ChevronDown
-	} from 'lucide-svelte';
+	} from '@lucide/svelte';
 	import LoadingSpinner from '../ui/LoadingSpinner.svelte';
 	import VotingWidget from './VotingWidget.svelte';
 	import DiscordAccountsEvidence from './DiscordAccountsEvidence.svelte';
@@ -167,7 +167,7 @@
 	const activeStatus = $derived.by(() => {
 		if (!userStatus) return null;
 
-		const apiResult = userStatus.customApis.get(activeTab);
+		const apiResult = userStatus.get(activeTab);
 		return apiResult?.data ?? null;
 	});
 
@@ -175,7 +175,7 @@
 	const activeError = $derived.by(() => {
 		if (!userStatus) return error;
 
-		const apiResult = userStatus.customApis.get(activeTab);
+		const apiResult = userStatus.get(activeTab);
 		return apiResult?.error ?? error ?? null;
 	});
 
@@ -183,7 +183,7 @@
 	const activeLoading = $derived.by(() => {
 		if (!userStatus) return false;
 
-		const apiResult = userStatus.customApis.get(activeTab);
+		const apiResult = userStatus.get(activeTab);
 		return apiResult?.loading ?? false;
 	});
 
@@ -191,7 +191,7 @@
 	const tabs = $derived.by(() => {
 		if (!userStatus) return [];
 
-		return Array.from(userStatus.customApis.entries(), ([apiId, result]) => ({
+		return Array.from(userStatus.entries(), ([apiId, result]) => ({
 			id: apiId,
 			name: result.apiName,
 			loading: result.loading,
@@ -206,18 +206,18 @@
 
 		// First priority: Check if user has a preferred tab and if it exists in current results
 		const preferredTab = get(settings).lastSelectedCustomApiTab;
-		if (preferredTab && userStatus.customApis.has(preferredTab)) {
+		if (preferredTab && userStatus.has(preferredTab)) {
 			activeTab = preferredTab;
 			return;
 		}
 
 		// Second priority: If Rotector returns Safe (flagType 0) and custom APIs exist
-		const rotector = userStatus.customApis.get(ROTECTOR_API_ID);
-		const allApisSafe = Array.from(userStatus.customApis.values()).every(
+		const rotector = userStatus.get(ROTECTOR_API_ID);
+		const allApisSafe = Array.from(userStatus.values()).every(
 			(result) => !result.data || result.data.flagType === STATUS.FLAGS.SAFE
 		);
 
-		if (rotector?.data?.flagType === STATUS.FLAGS.SAFE && userStatus.customApis.size > 1) {
+		if (rotector?.data?.flagType === STATUS.FLAGS.SAFE && userStatus.size > 1) {
 			// If ALL APIs are safe, show Rotector tab
 			if (allApisSafe) {
 				activeTab = ROTECTOR_API_ID;
@@ -225,7 +225,7 @@
 			}
 
 			// Or else open first custom API that detected something
-			const firstCustomWithDetection = Array.from(userStatus.customApis.entries()).find(
+			const firstCustomWithDetection = Array.from(userStatus.entries()).find(
 				([id, result]) =>
 					id !== ROTECTOR_API_ID && result.data && result.data.flagType !== STATUS.FLAGS.SAFE
 			);
@@ -280,6 +280,15 @@
 			activeUserStatus?.processed === true
 	);
 
+	const isSafeEntity = $derived(
+		activeTab === ROTECTOR_API_ID &&
+			activeStatus &&
+			(activeStatus.flagType === STATUS.FLAGS.SAFE ||
+				(activeStatus.flagType === STATUS.FLAGS.QUEUED &&
+					!isGroup &&
+					(activeStatus as UserStatus).processed === true))
+	);
+
 	let showSafeReasons = $state(false);
 
 	// Queue cooldown check for recently processed users (3-day cooldown)
@@ -316,7 +325,7 @@
 	const customApiBadges = $derived.by(() => {
 		if (activeTab === ROTECTOR_API_ID || isGroup || !userStatus) return [];
 
-		const data = userStatus.customApis.get(activeTab)?.data;
+		const data = userStatus.get(activeTab)?.data;
 		return data && 'badges' in data ? (data.badges ?? []) : [];
 	});
 
@@ -330,6 +339,9 @@
 
 		switch (flag) {
 			case STATUS.FLAGS.UNSAFE:
+				if (!isGroup && !currentStatus?.reviewer) {
+					return $_('tooltip_header_unsafe_auto', { values: { 0: entityType } });
+				}
 				return $_('tooltip_header_unsafe', { values: { 0: entityType } });
 			case STATUS.FLAGS.PENDING: {
 				const confidencePercent = Math.round(confidence * 100);
@@ -478,9 +490,10 @@
 			width: customWidth
 				? Math.min(Math.max(customWidth, config.minWidth), config.maxWidth)
 				: undefined,
-			height: customHeight
-				? Math.min(Math.max(customHeight, config.minHeight), config.maxHeight)
-				: undefined
+			height:
+				customHeight && !isSafeEntity
+					? Math.min(Math.max(customHeight, config.minHeight), config.maxHeight)
+					: undefined
 		};
 	});
 
@@ -1240,7 +1253,7 @@
 						type="button"
 					>
 						<Info size={14} />
-						<span>{$_('tooltip_safe_reasons_title')}</span>
+						<span class="leading-none">{$_('tooltip_safe_reasons_title')}</span>
 						{#if showSafeReasons}
 							<ChevronDown size={14} />
 						{:else}
@@ -1259,6 +1272,12 @@
 							<li class="safe-reasons-item">{$_('tooltip_safe_reason_outfit')}</li>
 							<li class="safe-reasons-item">
 								{$_('tooltip_safe_reason_profile_changed')}
+							</li>
+							<li class="safe-reasons-item">
+								{$_('tooltip_safe_reason_throwaway_alt')}
+							</li>
+							<li class="safe-reasons-item">
+								{$_('tooltip_safe_reason_condo_groups')}
 							</li>
 							<li class="safe-reasons-item">
 								{parts[0]}<a
@@ -1427,15 +1446,15 @@
 								{#if reason.message}
 									{@const displayMessage = getDisplayText(reason.message)}
 									{@const messageLines = displayMessage.split('\n').filter((l) => l.trim())}
-									{#if messageLines.some((l) => parseSourceTag(l))}
+									{@const grouped = groupSourceLines(messageLines)}
+									{#if grouped.some((g) => g.kind === 'source')}
 										<div class="reason-evidence">
-											{#each messageLines as line, i (i)}
-												{@const parsed = parseSourceTag(line)}
-												{#if parsed}
+											{#each grouped as group, i (i)}
+												{#if group.kind === 'source'}
 													<div class="source-evidence-item">
 														<div class="source-evidence-header">
-															<span class="source-evidence-badge">{parsed.source}</span>
-															{#if parsed.source.toLowerCase() === 'trap'}
+															<span class="source-evidence-badge">{group.source}</span>
+															{#if group.source.toLowerCase() === 'trap'}
 																<div class="source-info-indicator">
 																	<Info size={12} />
 																	<div class="source-info-popover">
@@ -1451,7 +1470,7 @@
 																		</p>
 																	</div>
 																</div>
-															{:else if parsed.source.toLowerCase() === 'discord'}
+															{:else if group.source.toLowerCase() === 'discord'}
 																<div class="source-info-indicator">
 																	<Info size={12} />
 																	<div class="source-info-popover">
@@ -1484,10 +1503,17 @@
 																</div>
 															{/if}
 														</div>
-														<div class="source-evidence-description">{parsed.description}</div>
+														<div class="source-evidence-description">{group.description}</div>
+														{#if group.subItems.length > 0}
+															<div class="source-evidence-subitems">
+																{#each group.subItems as subItem, si (si)}
+																	<div class="source-evidence-subitem">{subItem}</div>
+																{/each}
+															</div>
+														{/if}
 													</div>
 												{:else}
-													<div class="evidence-item">{line}</div>
+													<div class="evidence-item">{group.text}</div>
 												{/if}
 											{/each}
 										</div>

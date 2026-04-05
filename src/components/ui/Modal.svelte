@@ -1,6 +1,6 @@
 <script lang="ts">
 	import OverlayPortal from '@/components/overlay/OverlayPortal.svelte';
-	import { AlertCircle, AlertTriangle, CheckCircle, XCircle, X } from 'lucide-svelte';
+	import { AlertCircle, AlertTriangle, CheckCircle, XCircle, X } from '@lucide/svelte';
 
 	interface ModalProps {
 		isOpen: boolean;
@@ -247,7 +247,7 @@
 			});
 			return () => document.removeEventListener('keydown', handleEscape);
 		}
-		return () => {}; // No-op cleanup for when isOpen is false
+		return () => {};
 	});
 </script>
 
