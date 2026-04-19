@@ -34,6 +34,8 @@
 		calculateTooltipPosition,
 		calculateTransformOrigin
 	} from '@/lib/utils/tooltip-positioning';
+	import { detectEncoding, makeDecoder } from '@/lib/utils/encoding-detector';
+	import type { EncodingResult } from '@/lib/utils/encoding-detector';
 	import {
 		User,
 		AlertCircle,
@@ -50,12 +52,15 @@
 		Link,
 		Info,
 		ChevronRight,
-		ChevronDown
+		ChevronDown,
+		Lock,
+		LockOpen
 	} from '@lucide/svelte';
 	import LoadingSpinner from '../ui/LoadingSpinner.svelte';
 	import VotingWidget from './VotingWidget.svelte';
 	import DiscordAccountsEvidence from './DiscordAccountsEvidence.svelte';
 	import OutfitSnapshotLightbox from '../features/OutfitSnapshotLightbox.svelte';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { get } from 'svelte/store';
 	import { _, locale } from 'svelte-i18n';
 	import { SETTINGS_KEYS, type SettingsKey } from '@/lib/types/settings';
@@ -63,6 +68,10 @@
 	import type { CombinedStatus } from '@/lib/types/custom-api';
 	import { ROTECTOR_API_ID } from '@/lib/services/unified-query-service';
 	import { settings, updateSetting, removeSetting } from '@/lib/stores/settings';
+	import { themeManager } from '@/lib/utils/theme';
+	import { guardWatermark, renderWatermarkTile } from '@/lib/utils/watermark';
+
+	const effectiveTheme = themeManager.effectiveTheme;
 
 	const TOOLTIP_SIZE = {
 		MIN_WIDTH: 400,
@@ -79,6 +88,7 @@
 	} as const;
 
 	const COMPACT_HEADER_MIN_WIDTH = 450;
+	const MIN_EVIDENCE_DECODE_LENGTH = 20;
 	const HOVER_POPOVER_OFFSET = 6;
 	const HOVER_POPOVER_VIEWPORT_PADDING = 12;
 	const HOVER_POPOVER_HIDE_DELAY = 80;
@@ -100,6 +110,11 @@
 	interface HoverPopoverState {
 		anchor: HTMLElement;
 		kind: HoverPopoverKind;
+	}
+
+	interface EvidenceDecodeEntry {
+		encoding: EncodingResult;
+		decoded: string;
 	}
 
 	const SOURCE_INFO_MAP: Record<
@@ -208,6 +223,8 @@
 	let tooltipRef = $state<HTMLElement>();
 	let overlayRef = $state<HTMLElement>();
 	let scrollContentRef = $state<HTMLElement>();
+	let stickyHeaderRef = $state<HTMLElement>();
+	let profileHeaderRef = $state<HTMLElement>();
 	let hoverPopoverRef = $state<HTMLElement>();
 	let voteData: VoteData | null = $state(null);
 	let loadingVotes = $state(false);
@@ -235,8 +252,11 @@
 	let translationsMap = $state<Record<string, string>>({});
 	let isTranslating = $state(false);
 	let translationError = $state<string | null>(null);
-	let showTranslated = $state(true); // Toggle between original and translated text
-	let translationAttempted = $state(false); // Track if we've tried translating
+	let showTranslated = $state(true);
+	let translationAttempted = $state(false);
+
+	// Expanded cipher originals
+	let expandedOriginals = new SvelteSet<string>();
 
 	// Options menu state
 	let optionsMenuRef = $state<HTMLElement>();
@@ -589,6 +609,29 @@
 		return formatViolationReasons(currentStatus.reasons);
 	});
 
+	// Decode map keyed by raw evidence content
+	const evidenceEncodingMap = $derived.by(() => {
+		const map = new SvelteMap<string, EvidenceDecodeEntry>();
+		if (!$settings[SETTINGS_KEYS.CIPHER_DECODING_ENABLED]) return map;
+		for (const reason of reasonEntries) {
+			if (!reason.evidence) continue;
+			for (const evidence of reason.evidence) {
+				if (evidence.type !== 'regular') continue;
+				if (evidence.content.trim().length < MIN_EVIDENCE_DECODE_LENGTH) continue;
+				if (map.has(evidence.content)) continue;
+
+				const result = detectEncoding(evidence.content);
+				if (!result) continue;
+
+				const decoded = makeDecoder(result)(evidence.content);
+				if (decoded.trim() === evidence.content.trim()) continue;
+
+				map.set(evidence.content, { encoding: result, decoded });
+			}
+		}
+		return map;
+	});
+
 	// Check if auto-translation should be enabled
 	const shouldAutoTranslate = $derived.by(() => {
 		const translateEnabled = $settings[SETTINGS_KEYS.TRANSLATE_VIOLATIONS_ENABLED];
@@ -643,6 +686,48 @@
 	function getDisplayText(originalText: string): string {
 		if (!showTranslated) return originalText;
 		return translationsMap[originalText] || originalText;
+	}
+
+	// Resolve decoded content, falling back to raw if no decode entry exists
+	function getDecodedContent(content: string): string {
+		return evidenceEncodingMap.get(content)?.decoded ?? content;
+	}
+
+	// Chip label when decoded text is shown
+	function getDecodedChipLabel(encoding: EncodingResult): string {
+		switch (encoding.type) {
+			case 'caesar':
+				return $_('cipher_chip_decoded', { values: { shift: encoding.shift } });
+			case 'morse':
+				return $_('cipher_chip_decoded_morse');
+			case 'morse+caesar':
+				return $_('cipher_chip_decoded_morse_caesar', { values: { shift: encoding.shift } });
+			case 'binary':
+				return $_('cipher_chip_decoded_binary');
+		}
+	}
+
+	// Chip label when original cipher text is shown
+	function getDetectedChipLabel(encoding: EncodingResult): string {
+		switch (encoding.type) {
+			case 'caesar':
+				return $_('cipher_chip_detected');
+			case 'morse':
+				return $_('cipher_chip_detected_morse');
+			case 'morse+caesar':
+				return $_('cipher_chip_detected_morse_caesar');
+			case 'binary':
+				return $_('cipher_chip_detected_binary');
+		}
+	}
+
+	// Toggle cipher original visibility
+	function toggleOriginal(content: string) {
+		if (expandedOriginals.has(content)) {
+			expandedOriginals.delete(content);
+		} else {
+			expandedOriginals.add(content);
+		}
 	}
 
 	// Reviewer display info for current user status
@@ -1104,6 +1189,7 @@
 		showTranslated = true;
 		showOptionsMenu = false;
 		copySuccess = false;
+		expandedOriginals.clear();
 	});
 
 	// Trigger automatic translation
@@ -1144,7 +1230,7 @@
 							if (evidence.outfitName) textsForReason.push(evidence.outfitName);
 							if (evidence.outfitReason) textsForReason.push(evidence.outfitReason);
 						} else if (evidence.content) {
-							textsForReason.push(evidence.content);
+							textsForReason.push(getDecodedContent(evidence.content));
 						}
 					}
 				}
@@ -1308,6 +1394,25 @@
 	$effect(() => {
 		if (!flaggedOutfitNamesKey) return;
 		void loadOutfitSnapshots();
+	});
+
+	// Anti-forgery watermark covering every user-visible zone of the tooltip
+	$effect(() => {
+		if (!activeStatus) return;
+
+		const dataUri = renderWatermarkTile(
+			sanitizedUserId,
+			activeStatus.flagType,
+			Math.floor(Date.now() / 1000),
+			$effectiveTheme
+		);
+
+		const targets = [tooltipRef, stickyHeaderRef, profileHeaderRef].filter(
+			(el): el is HTMLElement => !!el
+		);
+		const cleanups = targets.map((el) => guardWatermark(el, dataUri));
+
+		return () => cleanups.forEach((fn) => fn());
 	});
 
 	// Setup and cleanup
@@ -1840,7 +1945,9 @@
 									<div class="reason-evidence">
 										{#if reason.typeName === 'Condo Activity'}
 											<DiscordAccountsEvidence
-												fallbackEvidence={reason.evidence.map((e) => getDisplayText(e.content))}
+												fallbackEvidence={reason.evidence.map((e) =>
+													getDisplayText(getDecodedContent(e.content))
+												)}
 												robloxUserId={parseInt(sanitizedUserId, 10)}
 											/>
 										{:else}
@@ -1908,7 +2015,43 @@
 														</div>
 													</div>
 												{:else}
-													<div class="evidence-item">{getDisplayText(evidence.content)}</div>
+													{@const decodeEntry = evidenceEncodingMap.get(evidence.content)}
+													{#if decodeEntry}
+														{@const isOriginalShown = expandedOriginals.has(evidence.content)}
+														<div class="decoded-evidence-item">
+															<div class="decoded-evidence-text">
+																{getDisplayText(decodeEntry.decoded)}
+															</div>
+															<button
+																class="decoded-evidence-chip"
+																onmousedown={(e) => {
+																	e.stopPropagation();
+																	e.preventDefault();
+																	toggleOriginal(evidence.content);
+																}}
+																type="button"
+															>
+																{#if isOriginalShown}
+																	<Lock size={11} />
+																	<span>{getDetectedChipLabel(decodeEntry.encoding)}</span>
+																	<span class="decoded-evidence-action"
+																		>{$_('tooltip_evidence_hide_original')}</span
+																	>
+																{:else}
+																	<LockOpen size={11} />
+																	<span>{getDecodedChipLabel(decodeEntry.encoding)}</span>
+																	<span class="decoded-evidence-action"
+																		>{$_('cipher_chip_show_original')}</span
+																	>
+																{/if}
+															</button>
+															{#if isOriginalShown}
+																<div class="decoded-evidence-original">{evidence.content}</div>
+															{/if}
+														</div>
+													{:else}
+														<div class="evidence-item">{getDisplayText(evidence.content)}</div>
+													{/if}
 												{/if}
 											{/each}
 										{/if}
@@ -1976,7 +2119,7 @@
 				style:max-height={tooltipDimensions.height ? 'none' : undefined}
 				class="expanded-tooltip-content"
 			>
-				<div class="tooltip-sticky-header">
+				<div bind:this={stickyHeaderRef} class="tooltip-sticky-header">
 					<!-- Options Menu -->
 					{#if activeTab === ROTECTOR_API_ID && !isGroup}
 						<div bind:this={optionsMenuRef} class="tooltip-options-container">
@@ -2035,7 +2178,11 @@
 					<!-- Profile Header -->
 					{#if isGroup && groupInfo}
 						<!-- Group Header -->
-						<div class="tooltip-profile-header" class:compact={headerCompact}>
+						<div
+							bind:this={profileHeaderRef}
+							class="tooltip-profile-header"
+							class:compact={headerCompact}
+						>
 							<div class="tooltip-avatar">
 								<img alt="" src={groupInfo.groupImageUrl} />
 							</div>
@@ -2067,7 +2214,11 @@
 						</div>
 					{:else if !isGroup && userInfo}
 						<!-- User Header -->
-						<div class="tooltip-profile-header" class:compact={headerCompact}>
+						<div
+							bind:this={profileHeaderRef}
+							class="tooltip-profile-header"
+							class:compact={headerCompact}
+						>
 							<div class="tooltip-avatar">
 								<img alt="" src={userInfo.avatarUrl} />
 							</div>
@@ -2186,7 +2337,7 @@
 		{@render tabNavigation()}
 
 		<!-- Sticky header -->
-		<div class="tooltip-sticky-header">
+		<div bind:this={stickyHeaderRef} class="tooltip-sticky-header">
 			<!-- Simple header -->
 			<div id="tooltip-header" class="tooltip-header">
 				<div class="header-message">

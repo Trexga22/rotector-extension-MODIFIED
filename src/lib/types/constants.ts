@@ -32,7 +32,7 @@ export const API_CONFIG = {
 		QUEUE_LIMITS: '/v1/queue/limits',
 		SUBMIT_VOTE: '/v1/votes/roblox/user',
 		GET_VOTES: '/v1/votes/roblox/user',
-		GET_STATS: '/v1/stats',
+		GET_STATS: '/v2/stats',
 		EXTENSION_AUTH_LOGIN: '/v1/extension/auth/login',
 		EXTENSION_PROFILE: '/v1/extension/profile',
 		EXTENSION_PROFILE_ANONYMOUS: '/v1/extension/profile/anonymous',
@@ -257,11 +257,9 @@ export const REPORT_PAGE_SELECTORS = {
 	INNER_FORM: '.single-step-container',
 	FOOTER: '.single-step-footer',
 	CATEGORY_BUTTON: 'button[role="combobox"]',
-	CATEGORY_SELECTED_TEXT: 'button[role="combobox"] .foundation-web-menu-item-title',
 	COMMENT_TEXTAREA: 'textarea.foundation-web-text-area',
 	DROPDOWN_OPTION: '.foundation-web-menu-item[data-radix-collection-item]',
 	DROPDOWN_OPTION_TEXT: '.foundation-web-menu-item-title',
-	DROPDOWN_LISTBOX: '[role="listbox"]',
 	SUBMIT_BUTTON: '.single-step-footer button[type="button"]'
 } as const;
 
@@ -371,7 +369,8 @@ export const COMPONENT_CLASSES = {
 	VOTING_WIDGET: 'rotector-voting-widget',
 	COMPONENT_BASE: 'rotector-component',
 	EXPORT_BUTTON: 'rotector-export-button',
-	FRIENDS_SCAN: 'rotector-friends-scan'
+	FRIENDS_SCAN: 'rotector-friends-scan',
+	CIPHER_INDICATOR: 'rotector-cipher-indicator'
 } as const;
 
 // Type for component class values
