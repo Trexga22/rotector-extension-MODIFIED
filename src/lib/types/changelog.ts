@@ -31,6 +31,11 @@ export const CHANGELOGS: Changelog[] = [
 			{
 				type: 'added',
 				description:
+					'Group members presence - Member tiles now show online, in-game, and studio presence icons at the bottom-right of each avatar'
+			},
+			{
+				type: 'added',
+				description:
 					'Bio decoder - Detects Caesar cipher, Morse code, and binary-encoded text in profile bios and shows a one-click decode chip'
 			},
 			{
@@ -106,6 +111,36 @@ export const CHANGELOGS: Changelog[] = [
 					'Status lookups - List pages warm a shared cache so opening a tooltip or profile for a user you just scrolled past skips the network round trip, and pending lookups cancel when you navigate away'
 			},
 			{
+				type: 'changed',
+				description:
+					'Status indicators - Avatar tile badges render on a solid dark disc with a subtle drop shadow so they stay legible against any avatar'
+			},
+			{
+				type: 'changed',
+				description:
+					'Queue submission acknowledgments - Expanded the required checks to better communicate expectations around accuracy and responsible use'
+			},
+			{
+				type: 'changed',
+				description:
+					'Status label - Users the system has never reviewed now show "Not Checked" instead of "Not Flagged", which is reserved for users that were queued and cleared'
+			},
+			{
+				type: 'fixed',
+				description:
+					'Group members carousel - Status indicators now render with the same disc and shadow treatment as every other carousel instead of appearing as a bare icon on the avatar'
+			},
+			{
+				type: 'fixed',
+				description:
+					'Group members status position - Status badge now sits at the top-right of each avatar, matching every other carousel instead of floating at the bottom-right'
+			},
+			{
+				type: 'fixed',
+				description:
+					'Roblox API credentials - Various requests through the Roblox API now send session cookies so data loads correctly with extended rate limits'
+			},
+			{
 				type: 'fixed',
 				description:
 					'Custom API toggle - Enabling an API that needs browser permission no longer leaves the toggle in a stuck state. Accept to enable, deny to keep disabled; no refresh needed.'
@@ -114,6 +149,11 @@ export const CHANGELOGS: Changelog[] = [
 				type: 'fixed',
 				description:
 					'Custom API meta - Rotector system card no longer shows a meaningless Jan 1, 1970 creation date and fixed timeout'
+			},
+			{
+				type: 'fixed',
+				description:
+					"Custom API empty results - Users omitted from a batch response now show as 'No data available for this API' in the tooltip header instead of displaying as an error. Empty-result tabs appear slightly dimmed."
 			},
 			{
 				type: 'fixed',
@@ -149,6 +189,11 @@ export const CHANGELOGS: Changelog[] = [
 				type: 'fixed',
 				description:
 					'Info popovers - Hover info boxes in the tooltip no longer get clipped by the scroll area'
+			},
+			{
+				type: 'fixed',
+				description:
+					'Tooltip position - Preview tooltip no longer snaps to the top-left corner when navigating carousels or member lists quickly'
 			},
 			{
 				type: 'fixed',
@@ -194,6 +239,16 @@ export const CHANGELOGS: Changelog[] = [
 				type: 'fixed',
 				description:
 					'Tooltip loading timeout - Stalled requests surface an error after 15 seconds instead of spinning forever'
+			},
+			{
+				type: 'fixed',
+				description:
+					'Condo Activity evidence - Custom API evidence alongside the Discord lookup is preserved instead of being replaced'
+			},
+			{
+				type: 'fixed',
+				description:
+					'Discord lookup - Linked Discord accounts with no monitored server memberships are hidden instead of appearing with an empty 0-server entry'
 			},
 			{
 				type: 'removed',

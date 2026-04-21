@@ -277,6 +277,7 @@
 	let headerCompact = $state(false);
 	let hoverPopoverHideTimeout: ReturnType<typeof setTimeout> | null = null;
 	let hoverPopoverFrame: number | null = null;
+	let previewPositionFrame: number | null = null;
 
 	// Engine version status for options menu display
 	const engineVersionStatus = $derived.by(() => {
@@ -331,6 +332,7 @@
 			name: result.apiName,
 			loading: result.loading,
 			error: !!result.error && !result.data,
+			noData: !result.loading && !result.error && !result.data,
 			landscapeImageDataUrl: result.landscapeImageDataUrl
 		}));
 	});
@@ -468,6 +470,11 @@
 			(isRestricted && !isSelfLookup && !activeStatus && !activeLoading && !activeError)
 	);
 
+	// Batch resolved with this user omitted from the response
+	const isNoData = $derived(
+		!!userStatus && !activeLoading && !activeError && !effectivelyRestricted && !activeStatus
+	);
+
 	// Get custom API badges for active tab
 	const customApiBadges = $derived.by(() => {
 		if (activeTab === ROTECTOR_API_ID || isGroup || !userStatus) return [];
@@ -538,7 +545,8 @@
 	const headerMessage = $derived.by(() => {
 		if (effectivelyRestricted) return { full: $_('tooltip_restricted_header') };
 		if (activeError) return { full: $_('tooltip_error_details') };
-		if (!activeStatus) return { full: $_('tooltip_loading') };
+		if (activeLoading || !userStatus) return { full: $_('tooltip_loading') };
+		if (!activeStatus) return { full: $_('tooltip_no_data_available') };
 
 		const currentStatus = activeStatus;
 		const confidence = currentStatus.confidence || 0;
@@ -588,7 +596,7 @@
 
 		switch (currentStatus.flagType) {
 			case STATUS.FLAGS.SAFE:
-				return $_('tooltip_status_not_flagged');
+				return $_('tooltip_status_not_checked');
 			case STATUS.FLAGS.UNSAFE:
 				return $_('tooltip_status_unsafe');
 			case STATUS.FLAGS.PENDING:
@@ -696,6 +704,11 @@
 	// Resolve decoded content, falling back to raw if no decode entry exists
 	function getDecodedContent(content: string): string {
 		return evidenceEncodingMap.get(content)?.decoded ?? content;
+	}
+
+	// Match Rotector's "Discord User ID: <id>" evidence lines
+	function isDiscordIdEvidence(content: string): boolean {
+		return getDecodedContent(content).trim().startsWith('Discord User ID');
 	}
 
 	// Chip label when decoded text is shown
@@ -824,6 +837,11 @@
 	// Positioning for preview tooltips
 	function positionTooltip() {
 		if (!tooltipRef || !anchorElement || isExpanded) return;
+
+		if (!anchorElement.isConnected) {
+			onClose?.();
+			return;
+		}
 
 		const position = calculateTooltipPosition(tooltipRef, anchorElement);
 		applyTooltipPosition(tooltipRef, position);
@@ -1474,7 +1492,8 @@
 			};
 		} else {
 			// Preview tooltip setup
-			requestAnimationFrame(() => {
+			previewPositionFrame = requestAnimationFrame(() => {
+				previewPositionFrame = null;
 				positionTooltip();
 			});
 
@@ -1483,6 +1502,10 @@
 			window.addEventListener('resize', positionTooltip);
 
 			return () => {
+				if (previewPositionFrame !== null) {
+					cancelAnimationFrame(previewPositionFrame);
+					previewPositionFrame = null;
+				}
 				document.removeEventListener('keydown', handleKeydown);
 				document.removeEventListener('click', handleClickOutside);
 				window.removeEventListener('resize', positionTooltip);
@@ -1647,6 +1670,7 @@
 					class:active={activeTab === tab.id}
 					class:error={!hasImage && tab.error}
 					class:loading={!hasImage && tab.loading}
+					class:no-data={!hasImage && tab.noData}
 					class:tooltipTabHasImage={hasImage}
 					onclick={(e) => {
 						e.stopPropagation();
@@ -1727,15 +1751,14 @@
 		<div class="error-details">
 			{extractErrorMessage(activeError)}
 		</div>
-	{:else if activeLoading}
+	{:else if activeLoading || !userStatus}
 		<!-- Loading state -->
 		<div class="flex items-center justify-center gap-2 py-2">
 			<LoadingSpinner size="small" />
 			<span class="text-xs">{$_('tooltip_loading_user_info')}</span>
 		</div>
 	{:else if !activeStatus}
-		<!-- No data state -->
-		<div class="error-details">{$_('tooltip_no_data_available')}</div>
+		<!-- No-data state -->
 	{:else}
 		<!-- Status information -->
 		<div>
@@ -1969,119 +1992,125 @@
 									{/if}
 								{/if}
 								{#if reason.evidence && reason.evidence.length > 0}
+									{@const isCondoActivity = reason.typeName === 'Condo Activity'}
+									{@const discordIdEvidence = isCondoActivity
+										? reason.evidence.filter((e) => isDiscordIdEvidence(e.content))
+										: []}
+									{@const renderedEvidence = isCondoActivity
+										? reason.evidence.filter((e) => !isDiscordIdEvidence(e.content))
+										: reason.evidence}
 									<div class="reason-evidence">
-										{#if reason.typeName === 'Condo Activity'}
+										{#if isCondoActivity}
 											<DiscordAccountsEvidence
-												fallbackEvidence={reason.evidence.map((e) =>
+												fallbackEvidence={discordIdEvidence.map((e) =>
 													getDisplayText(getDecodedContent(e.content))
 												)}
 												robloxUserId={parseInt(sanitizedUserId, 10)}
 											/>
-										{:else}
-											{#each reason.evidence as evidence, index (index)}
-												{#if evidence.type === 'outfit' && evidence.outfitName && evidence.outfitReason}
-													{@const outfitName = evidence.outfitName}
-													{@const outfitReason = evidence.outfitReason}
-													{@const snapshot = outfitSnapshotMap?.get(outfitName)}
-													{@const snapshotCount = snapshot?.rawUrls.length ?? 0}
-													{@const primaryDataUrl = snapshot?.primaryDataUrl ?? null}
-													{@const hasPrimary = primaryDataUrl !== null}
-													{@const isMultiSnapshot = snapshotCount > 1}
-													<div class="outfit-evidence-item">
+										{/if}
+										{#each renderedEvidence as evidence, index (index)}
+											{#if evidence.type === 'outfit' && evidence.outfitName && evidence.outfitReason}
+												{@const outfitName = evidence.outfitName}
+												{@const outfitReason = evidence.outfitReason}
+												{@const snapshot = outfitSnapshotMap?.get(outfitName)}
+												{@const snapshotCount = snapshot?.rawUrls.length ?? 0}
+												{@const primaryDataUrl = snapshot?.primaryDataUrl ?? null}
+												{@const hasPrimary = primaryDataUrl !== null}
+												{@const isMultiSnapshot = snapshotCount > 1}
+												<div class="outfit-evidence-item">
+													<button
+														class="outfit-snapshot-thumb"
+														class:outfit-snapshot-thumb-empty={!hasPrimary}
+														disabled={!hasPrimary}
+														onclick={(e) => {
+															e.stopPropagation();
+															openOutfitLightbox(
+																outfitName,
+																outfitReason,
+																evidence.outfitConfidence ?? null
+															);
+														}}
+														type="button"
+													>
+														{#if loadingOutfitSnapshots && !outfitSnapshotMap}
+															<div class="outfit-snapshot-skeleton"></div>
+														{:else if hasPrimary}
+															<img
+																class="outfit-snapshot-img"
+																alt={getDisplayText(outfitName)}
+																decoding="async"
+																loading="lazy"
+																src={primaryDataUrl}
+															/>
+															{#if isMultiSnapshot}
+																<div class="outfit-snapshot-multi-overlay">
+																	<span class="outfit-snapshot-count">
+																		{snapshotCount}
+																	</span>
+																	<span class="outfit-snapshot-count-label">
+																		{$_('tooltip_outfit_snapshot_count_label')}
+																	</span>
+																</div>
+															{/if}
+														{:else}
+															<Shirt class="outfit-snapshot-placeholder-icon" size={20} />
+														{/if}
+													</button>
+													<div class="outfit-evidence-body">
+														<div class="outfit-evidence-header">
+															<div class="outfit-evidence-name">
+																{getDisplayText(outfitName)}
+															</div>
+															{#if evidence.outfitConfidence !== null}
+																<div class="outfit-confidence-badge">
+																	{evidence.outfitConfidence}
+																	%
+																</div>
+															{/if}
+														</div>
+														<div class="outfit-reason">{getDisplayText(outfitReason)}</div>
+													</div>
+												</div>
+											{:else}
+												{@const decodeEntry = evidenceEncodingMap.get(evidence.content)}
+												{#if decodeEntry}
+													{@const isOriginalShown = expandedOriginals.has(evidence.content)}
+													<div class="decoded-evidence-item">
+														<div class="decoded-evidence-text">
+															{getDisplayText(decodeEntry.decoded)}
+														</div>
 														<button
-															class="outfit-snapshot-thumb"
-															class:outfit-snapshot-thumb-empty={!hasPrimary}
-															disabled={!hasPrimary}
-															onclick={(e) => {
+															class="decoded-evidence-chip"
+															onmousedown={(e) => {
 																e.stopPropagation();
-																openOutfitLightbox(
-																	outfitName,
-																	outfitReason,
-																	evidence.outfitConfidence ?? null
-																);
+																e.preventDefault();
+																toggleOriginal(evidence.content);
 															}}
 															type="button"
 														>
-															{#if loadingOutfitSnapshots && !outfitSnapshotMap}
-																<div class="outfit-snapshot-skeleton"></div>
-															{:else if hasPrimary}
-																<img
-																	class="outfit-snapshot-img"
-																	alt={getDisplayText(outfitName)}
-																	decoding="async"
-																	loading="lazy"
-																	src={primaryDataUrl}
-																/>
-																{#if isMultiSnapshot}
-																	<div class="outfit-snapshot-multi-overlay">
-																		<span class="outfit-snapshot-count">
-																			{snapshotCount}
-																		</span>
-																		<span class="outfit-snapshot-count-label">
-																			{$_('tooltip_outfit_snapshot_count_label')}
-																		</span>
-																	</div>
-																{/if}
+															{#if isOriginalShown}
+																<Lock size={11} />
+																<span>{getDetectedChipLabel(decodeEntry.encoding)}</span>
+																<span class="decoded-evidence-action"
+																	>{$_('tooltip_evidence_hide_original')}</span
+																>
 															{:else}
-																<Shirt class="outfit-snapshot-placeholder-icon" size={20} />
+																<LockOpen size={11} />
+																<span>{getDecodedChipLabel(decodeEntry.encoding)}</span>
+																<span class="decoded-evidence-action"
+																	>{$_('cipher_chip_show_original')}</span
+																>
 															{/if}
 														</button>
-														<div class="outfit-evidence-body">
-															<div class="outfit-evidence-header">
-																<div class="outfit-evidence-name">
-																	{getDisplayText(outfitName)}
-																</div>
-																{#if evidence.outfitConfidence !== null}
-																	<div class="outfit-confidence-badge">
-																		{evidence.outfitConfidence}
-																		%
-																	</div>
-																{/if}
-															</div>
-															<div class="outfit-reason">{getDisplayText(outfitReason)}</div>
-														</div>
+														{#if isOriginalShown}
+															<div class="decoded-evidence-original">{evidence.content}</div>
+														{/if}
 													</div>
 												{:else}
-													{@const decodeEntry = evidenceEncodingMap.get(evidence.content)}
-													{#if decodeEntry}
-														{@const isOriginalShown = expandedOriginals.has(evidence.content)}
-														<div class="decoded-evidence-item">
-															<div class="decoded-evidence-text">
-																{getDisplayText(decodeEntry.decoded)}
-															</div>
-															<button
-																class="decoded-evidence-chip"
-																onmousedown={(e) => {
-																	e.stopPropagation();
-																	e.preventDefault();
-																	toggleOriginal(evidence.content);
-																}}
-																type="button"
-															>
-																{#if isOriginalShown}
-																	<Lock size={11} />
-																	<span>{getDetectedChipLabel(decodeEntry.encoding)}</span>
-																	<span class="decoded-evidence-action"
-																		>{$_('tooltip_evidence_hide_original')}</span
-																	>
-																{:else}
-																	<LockOpen size={11} />
-																	<span>{getDecodedChipLabel(decodeEntry.encoding)}</span>
-																	<span class="decoded-evidence-action"
-																		>{$_('cipher_chip_show_original')}</span
-																	>
-																{/if}
-															</button>
-															{#if isOriginalShown}
-																<div class="decoded-evidence-original">{evidence.content}</div>
-															{/if}
-														</div>
-													{:else}
-														<div class="evidence-item">{getDisplayText(evidence.content)}</div>
-													{/if}
+													<div class="evidence-item">{getDisplayText(evidence.content)}</div>
 												{/if}
-											{/each}
-										{/if}
+											{/if}
+										{/each}
 									</div>
 								{/if}
 							</div>
@@ -2219,7 +2248,7 @@
 									{$_('tooltip_profile_group_id')}
 									{sanitizedUserId}
 								</div>
-								{#if !effectivelyRestricted && !activeError}
+								{#if !effectivelyRestricted && !activeError && activeStatus}
 									<div class="tooltip-status-badge {statusBadgeClass}">
 										<span class="status-indicator"></span>
 										{statusBadgeText}
@@ -2228,7 +2257,7 @@
 							</div>
 							{#if showCompactColumns}
 								<div class="tooltip-header-right">
-									{#if activeStatus}
+									{#if activeStatus || isNoData}
 										<div class="tooltip-inline-message">
 											<div class="header-message">
 												{@render headerMessageSection(headerMessage)}
@@ -2258,7 +2287,7 @@
 									{/if}
 								</div>
 								<div class="tooltip-user-id">{$_('tooltip_profile_id')} {sanitizedUserId}</div>
-								{#if !effectivelyRestricted && !activeError}
+								{#if !effectivelyRestricted && !activeError && activeStatus}
 									<div class="tooltip-status-badge {statusBadgeClass}">
 										<span class="status-indicator"></span>
 										{statusBadgeText}
@@ -2267,7 +2296,7 @@
 							</div>
 							{#if showCompactColumns}
 								<div class="tooltip-header-right">
-									{#if activeStatus}
+									{#if activeStatus || isNoData}
 										<div class="tooltip-inline-message">
 											<div class="header-message">
 												{@render headerMessageSection(headerMessage)}
@@ -2281,7 +2310,7 @@
 					{:else}
 						<!-- Fallback header -->
 						<div class="tooltip-header">
-							<div>{error ? $_('tooltip_error_details') : $_('tooltip_loading')}</div>
+							<div>{@render headerMessageSection(headerMessage)}</div>
 							<div class="tooltip-user-id">
 								{isGroup ? $_('tooltip_entity_group') : $_('tooltip_profile_user')}
 								{$_('tooltip_profile_id')}
@@ -2292,7 +2321,7 @@
 
 					<!-- Header message and reviewer -->
 					{#if !showCompactColumns}
-						{#if (userInfo || groupInfo) && activeStatus}
+						{#if (userInfo || groupInfo) && (activeStatus || isNoData)}
 							<div class="tooltip-header">
 								<div class="header-message">
 									{@render headerMessageSection(headerMessage)}
